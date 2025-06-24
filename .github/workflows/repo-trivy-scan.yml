@@ -1,42 +1,58 @@
-# In your repository, e.g., newrelic-csec/infrastructure-bundle/.github/workflows/security-scan.yml
-name: 'Build and Scan'
+name: 'Trivy Scan'
 
-# This section now has two triggers
 on:
-  # 1. This trigger runs the workflow on every new pull request
   pull_request:
 
-  # 2. This new trigger runs the workflow on a schedule
-  schedule:
-    # This is a cron expression that means "at 00:00 UTC every day" (midnight)
-    - cron: '0 0 * * *'
-
 jobs:
-  # JOB 1: Build the Docker image and output its name
+  # JOB 1: Build the Docker image AND PUSH it to the registry
   build:
-    name: Build Docker Image
+    name: Build and Push Docker Image
     runs-on: ubuntu-latest
+    # We need to grant permissions for the job to write to GitHub Packages (GHCR)
+    permissions:
+      contents: read
+      packages: write
+
+    # This section defines the outputs that this job will provide to other jobs
     outputs:
-      image-name: ${{ steps.build-image.outputs.image-name }}
+      image-name: ${{ steps.build-and-push-image.outputs.imageName }}
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
       
-      # This is your repository's specific build logic.
-      # It will run for both PRs and the scheduled job.
-      - name: Build local Docker image
-        id: build-image
-        run: |
-          docker build -t my-app:${{ github.sha }} .
-          echo "image-name=my-app:${{ github.sha }}" >> $GITHUB_OUTPUT
-
-
+      # This step logs into GHCR using a temporary token
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+          
+      # This is the new build step. It uses a standard action to build from your Dockerfile
+      # and push the image to GHCR with a unique tag.
+      - name: Build and push Docker image
+        id: build-and-push-image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          # Tags the image with a unique name for this specific commit
+          tags: ghcr.io/${{ github.repository }}:${{ github.sha }}
+          # The action automatically outputs the full image name as 'imageName'
+          
   # JOB 2: Call the reusable organization workflow
   scan:
     name: Trigger Organization Scan
+    # This ensures the 'scan' job will only start after the 'build' job succeeds
     needs: build
+    
+    # This 'uses' is now at the top level of the job
     uses: newrelic-csec/.github/.github/workflows/required-trivy-scan.yml@main
+    
     with:
+      # This retrieves the full image name (e.g., ghcr.io/newrelic-csec/infrastructure-bundle:sha)
+      # from the 'build' job's output.
       image-name: ${{ needs.build.outputs.image-name }}
+      
     secrets: inherit
