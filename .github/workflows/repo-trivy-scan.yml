@@ -1,15 +1,10 @@
-# In your repository, e.g., newrelic-csec/infrastructure-bundle/.github/workflows/security-scan.yml
 name: 'Build and Scan'
 
-# This section now has two triggers
 on:
-  # 1. This trigger runs the workflow on every new pull request
   pull_request:
-
-  # 2. This new trigger runs the workflow on a schedule
   schedule:
-    # This is a cron expression that means "at 00:00 UTC every day" (midnight)
     - cron: '0 0 * * *'
+  workflow_dispatch:
 
 jobs:
   # JOB 1: Build the Docker image and output its name
@@ -23,16 +18,34 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
       
-      # This is your repository's specific build logic.
-      # It will run for both PRs and the scheduled job.
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          
+      - name: Download integrations
+        run: go run downloader.go
+
+      # --- CORRECTED BUILD STEP ---
+      # This step now uses your repository's own build script.
       - name: Build local Docker image
         id: build-image
         run: |
-          docker build -t my-app:${{ github.sha }} .
-          echo "image-name=my-app:${{ github.sha }}" >> $GITHUB_OUTPUT
+          # Use the repository's own build script, passing the required platform environment variable.
+          # The '--load' flag makes the image available locally for the next job.
+          DOCKER_PLATFORMS=linux/amd64 ./docker-build.sh . --load
+          
+          # Output the hardcoded image name from your original security file.
+          # Your build script likely tags the image with this name.
+          echo "image-name=newrelic/infrastructure-bundle:ci" >> $GITHUB_OUTPUT
 
 
-  # JOB 2: Call the reusable organization workflow
+  # JOB 2: Call the reusable organization workflow (No changes to this job)
   scan:
     name: Trigger Organization Scan
     needs: build
